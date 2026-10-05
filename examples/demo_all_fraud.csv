@@ -1,0 +1,4 @@
+Transaction_ID,User_ID,Transaction_Amount,Transaction_Type,Timestamp,Account_Balance,Device_Type,Location,Merchant_Category,IP_Address_Flag,Previous_Fraudulent_Activity,Daily_Transaction_Count,Avg_Transaction_Amount_7d,Failed_Transaction_Count_7d,Card_Type,Card_Age,Transaction_Distance,Authentication_Method,Is_Weekend
+FRAUD_001,USER_9001,2500.00,Online,2024-03-10 02:15:00,8000.00,Mobile,Tokyo,Electronics,1,1,12,250.00,4,Visa,6,3500.00,Password,1
+FRAUD_002,USER_9002,4500.00,Online,2024-03-11 03:45:00,5000.00,Mobile,Mumbai,Electronics,1,1,14,150.00,4,Visa,5,4500.00,Password,0
+FRAUD_003,USER_9003,3200.00,Online,2024-03-06 23:30:00,9000.00,Mobile,London,Electronics,1,1,11,180.00,4,Mastercard,8,3200.00,Password,0
