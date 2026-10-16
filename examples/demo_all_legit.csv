@@ -1,4 +1,4 @@
 Transaction_ID,User_ID,Transaction_Amount,Transaction_Type,Timestamp,Account_Balance,Device_Type,Location,Merchant_Category,IP_Address_Flag,Previous_Fraudulent_Activity,Daily_Transaction_Count,Avg_Transaction_Amount_7d,Failed_Transaction_Count_7d,Card_Type,Card_Age,Transaction_Distance,Authentication_Method,Is_Weekend
 LEGIT_001,USER_8001,45.50,POS,2024-03-04 12:30:00,50000.00,Mobile,New York,Groceries,0,0,2,60.00,0,Visa,72,12.50,PIN,0
 LEGIT_002,USER_8002,89.99,Online,2024-03-09 15:00:00,32000.00,Laptop,London,Clothing,0,0,3,120.00,0,Mastercard,48,25.00,OTP,1
-LEGIT_003,USER_8003,120.00,ATM Withdrawal,2024-03-05 10:00:00,75000.00,Mobile,Sydney,Restaurants,0,0,1,100.00,0,Amex,120,8.00,Biometric,0
+LEGIT_003,USER_8003,120.00,ATM Withdrawal,2024-03-05 10:00:00,75000.00,Mobile,Sydney,Restaurants,0,0,1,120.00,0,Amex,120,8.00,Biometric,0

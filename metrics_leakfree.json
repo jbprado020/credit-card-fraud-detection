@@ -1,0 +1,27 @@
+{
+  "threshold": 0.45,
+  "min_precision_floor": 0.75,
+  "dropped_leaky_cols": [
+    "Failed_Transaction_Count_7d"
+  ],
+  "best_params": {
+    "clf__subsample": 1.0,
+    "clf__n_estimators": 100,
+    "clf__max_depth": 3,
+    "clf__learning_rate": 0.1,
+    "clf__colsample_bytree": 1.0
+  },
+  "best_cv_pr_auc": 0.3243652206196061,
+  "accuracy": 0.6789,
+  "precision": 1.0,
+  "recall": 0.0006224712107065049,
+  "f1": 0.001244167962674961,
+  "pr_auc": 0.32277621432148595,
+  "tn": 6787,
+  "fp": 0,
+  "fn": 3211,
+  "tp": 2,
+  "n_train": 30000,
+  "n_val": 10000,
+  "n_test": 10000
+}

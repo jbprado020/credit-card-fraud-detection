@@ -1,4 +1,7 @@
-"""Streamlit app: credit card fraud detection (XGBoost + SMOTE, threshold 0.20)."""
+"""Streamlit UI: Credit Card Fraud Detection (XGBoost + SMOTE).
+Every score comes from the trained model; no hand-written fraud rules.
+Run:  python train_model.py synthetic_fraud_dataset.csv   then   streamlit run app.py
+"""
 import json, os
 from datetime import date, time
 
@@ -6,105 +9,188 @@ import joblib
 import pandas as pd
 import streamlit as st
 
-from train_model import prepare
+st.set_page_config(page_title="Fraud Detection System", page_icon="🛡️", layout="wide")
 
-st.set_page_config(page_title="Credit Card Fraud Detector", page_icon="💳", layout="wide")
+# ------------------------------------------------------------------ style
+st.markdown("""
+<style>
+.block-container{padding-top:1.4rem;max-width:1200px}
+.hero{background:linear-gradient(120deg,#7b1e2b 0%,#b3263a 60%,#d64545 100%);color:#fff;
+      padding:1.4rem 1.8rem;border-radius:16px;margin-bottom:1.2rem}
+.hero h1{margin:0;font-size:1.9rem;color:#fff}
+.hero p{margin:.3rem 0 0;opacity:.92;font-size:.95rem}
+.card{border-radius:16px;padding:1.4rem 1.6rem;color:#fff;text-align:center}
+.card .big{font-size:3.2rem;font-weight:800;line-height:1.1}
+.card .lbl{font-size:.85rem;letter-spacing:.08em;text-transform:uppercase;opacity:.9}
+.card .verdict{font-size:1.15rem;font-weight:700;margin-top:.5rem}
+.bar{height:12px;background:rgba(255,255,255,.3);border-radius:8px;margin-top:.9rem;position:relative}
+.bar>div{height:100%;background:#fff;border-radius:8px}
+.tick{position:absolute;top:-4px;width:2px;height:20px;background:#000;opacity:.55}
+.chip{display:inline-block;padding:.25rem .7rem;margin:.15rem .25rem .15rem 0;border-radius:999px;
+      font-size:.82rem;background:#f1f1f4;color:#333}
+.chip.warn{background:#fde8e8;color:#9b1c1c}
+.chip.ok{background:#e6f4ea;color:#1e6b34}
+</style>""", unsafe_allow_html=True)
 
+# ------------------------------------------------------------------ model
 @st.cache_resource
 def load():
-    bundle = joblib.load("model.joblib")
+    if not os.path.exists("model.joblib"):
+        return None, None
     metrics = json.load(open("metrics.json")) if os.path.exists("metrics.json") else None
-    return bundle, metrics
-
-if not os.path.exists("model.joblib"):
-    st.error("model.joblib not found. Run:  python train_model.py synthetic_fraud_dataset.csv")
-    st.stop()
+    return joblib.load("model.joblib"), metrics
 
 bundle, metrics = load()
-model, THRESH, FEATURES = bundle["model"], bundle["threshold"], bundle["features"]
+if bundle is None:
+    st.error("model.joblib not found. Run:  python train_model.py synthetic_fraud_dataset.csv")
+    st.stop()
+THRESH, FEATURES, BASELINE = bundle["threshold"], bundle["features"], bundle["baseline"]
 
-st.title("💳 Credit Card Fraud Detection System")
-st.caption("XGBoost + SMOTE pipeline with a precision-constrained decision threshold "
-           f"of {THRESH:.2f}. Trained on a synthetic dataset, so for demonstration only.")
+def predict(df: pd.DataFrame):
+    return bundle["model"].predict_proba(df[FEATURES])[:, 1]
 
-tab1, tab2, tab3 = st.tabs(["Check one transaction", "Check a CSV file", "Model information"])
+def influence(row: pd.DataFrame):
+    """Model-based explanation: change in score when one input is replaced by a typical value."""
+    p = float(predict(row)[0]); out = {}
+    for f in FEATURES:
+        alt = row.copy(); alt[f] = BASELINE[f]
+        out[f] = p - float(predict(alt)[0])
+    return pd.Series(out)
 
-# ---------------------------------------------------------------- single
+# ------------------------------------------------------------------ defaults / presets
+DEFAULTS = dict(amount=120.0, balance=45000.0, ttype="POS", merchant="Groceries", ip=False, device="Mobile",
+                location="New York", card="Visa", auth="PIN", card_age=60, prev=False, daily=3, avg7=300.0,
+                failed=0, dist=40.0, d=date.today(), t=time(14, 30))
+PRESETS = {
+    "✅ Typical purchase": DEFAULTS,
+    "🚨 Suspicious activity": dict(DEFAULTS, amount=2400.0, ttype="Online", merchant="Electronics",
+                                   ip=True, device="Laptop", location="Mumbai", auth="Password", prev=True,
+                                   daily=11, avg7=150.0, failed=4, dist=3800.0, t=time(3, 10)),
+}
+for k, v in DEFAULTS.items():
+    st.session_state.setdefault(k, v)
+
+def apply_preset(name):
+    for k, v in PRESETS[name].items():
+        st.session_state[k] = v
+
+# ------------------------------------------------------------------ sidebar
+with st.sidebar:
+    st.markdown("## 🛡️ Fraud Detector")
+    st.caption("XGBoost + SMOTE · University of Mindanao")
+    st.divider()
+    st.markdown("**Quick examples**")
+    for name in PRESETS:
+        st.button(name, on_click=apply_preset, args=(name,), width="stretch")
+    st.divider()
+    st.metric("Decision threshold", f"{THRESH:.2f}")
+    if metrics:
+        st.metric("Precision", f"{metrics['precision']:.3f}")
+        st.metric("Recall", f"{metrics['recall']:.3f}")
+    st.caption("Trained on a synthetic dataset. Demonstration only.")
+
+st.markdown(f"""<div class="hero"><h1>Credit Card Fraud Detection System</h1>
+<p>Enter a transaction or upload a file. The model estimates the fraud probability and flags anything at or above {THRESH:.0%}.</p></div>""",
+            unsafe_allow_html=True)
+tab1, tab2, tab3 = st.tabs(["🔍 Single transaction", "📄 Batch (CSV)", "📊 Model info"])
+
+# ------------------------------------------------------------------ tab 1
 with tab1:
-    with st.form("single"):
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            amount = st.number_input("Transaction amount", 0.0, 1_000_000.0, 100.0, step=10.0)
-            balance = st.number_input("Account balance", 0.0, 10_000_000.0, 50_000.0, step=1000.0)
-            ttype = st.selectbox("Transaction type", ["POS", "Online", "ATM Withdrawal", "Bank Transfer"])
-            merchant = st.selectbox("Merchant category", ["Groceries", "Restaurants", "Clothing", "Electronics", "Travel"])
-            ip_flag = st.selectbox("IP address flagged?", [0, 1], format_func=lambda v: "Yes" if v else "No")
-        with c2:
-            device = st.selectbox("Device type", ["Mobile", "Laptop", "Tablet"])
-            location = st.selectbox("Location", ["New York", "London", "Tokyo", "Mumbai", "Sydney"])
-            card = st.selectbox("Card type", ["Visa", "Mastercard", "Amex", "Discover"])
-            auth = st.selectbox("Authentication method", ["PIN", "OTP", "Password", "Biometric"])
-            card_age = st.number_input("Card age (months)", 0, 600, 60)
-        with c3:
-            prev = st.selectbox("Previous fraudulent activity?", [0, 1], format_func=lambda v: "Yes" if v else "No")
-            daily = st.number_input("Transactions today", 0, 100, 3)
-            avg7 = st.number_input("Average amount, last 7 days", 0.0, 1_000_000.0, 300.0, step=10.0)
-            failed = st.number_input("Failed transactions, last 7 days", 0, 20, 0)
-            dist = st.number_input("Distance from usual location (km)", 0.0, 20_000.0, 50.0, step=10.0)
-        d1, d2 = st.columns(2)
-        tx_date = d1.date_input("Transaction date", date.today())
-        tx_time = d2.time_input("Transaction time", time(12, 0))
-        go = st.form_submit_button("Check transaction", type="primary")
+    left, right = st.columns([1.35, 1], gap="large")
+    with left:
+        with st.container(border=True):
+            st.markdown("**Transaction**")
+            a, b = st.columns(2)
+            a.number_input("Amount", 0.0, 1_000_000.0, step=10.0, key="amount")
+            b.number_input("Account balance", 0.0, 10_000_000.0, step=1000.0, key="balance")
+            a.selectbox("Type", ["POS", "Online", "ATM Withdrawal", "Bank Transfer"], key="ttype")
+            b.selectbox("Merchant category", ["Groceries", "Restaurants", "Clothing", "Electronics", "Travel"], key="merchant")
+            a.selectbox("Location", ["New York", "London", "Tokyo", "Mumbai", "Sydney"], key="location")
+            b.number_input("Distance from usual location (km)", 0.0, 20000.0, step=10.0, key="dist")
+            a.date_input("Date", key="d")
+            b.time_input("Time", key="t")
+        with st.container(border=True):
+            st.markdown("**Card and device**")
+            a, b = st.columns(2)
+            a.selectbox("Card type", ["Visa", "Mastercard", "Amex", "Discover"], key="card")
+            b.number_input("Card age (months)", 0, 600, key="card_age")
+            a.selectbox("Device", ["Mobile", "Laptop", "Tablet"], key="device")
+            b.selectbox("Authentication", ["PIN", "OTP", "Password", "Biometric"], key="auth")
+            st.toggle("IP address flagged", key="ip")
+        with st.container(border=True):
+            st.markdown("**Recent behaviour**")
+            a, b, c = st.columns(3)
+            a.number_input("Transactions today", 0, 100, key="daily")
+            b.number_input("Avg amount (7 days)", 0.0, 1_000_000.0, step=10.0, key="avg7")
+            c.number_input("Failed attempts (7 days)", 0, 20, key="failed")
+            st.toggle("Previous fraudulent activity", key="prev")
+        go = st.button("Analyze transaction", type="primary", width="stretch")
 
-    if go:
-        row = pd.DataFrame([{
-            "Transaction_Amount": amount, "Transaction_Type": ttype, "Account_Balance": balance,
-            "Device_Type": device, "Location": location, "Merchant_Category": merchant,
-            "IP_Address_Flag": ip_flag, "Previous_Fraudulent_Activity": prev,
-            "Daily_Transaction_Count": daily, "Avg_Transaction_Amount_7d": avg7,
-            "Failed_Transaction_Count_7d": failed, "Card_Type": card, "Card_Age": card_age,
-            "Transaction_Distance": dist, "Authentication_Method": auth,
-            "Is_Weekend": int(tx_date.weekday() >= 5),
-            "Hour": tx_time.hour, "Day": tx_date.day}])[FEATURES]
-        p = float(model.predict_proba(row)[0, 1])
-        st.subheader("Result")
-        m1, m2 = st.columns(2)
-        m1.metric("Fraud probability", f"{p:.1%}")
-        m2.metric("Decision threshold", f"{THRESH:.0%}")
-        st.progress(min(p, 1.0))
-        if p >= THRESH:
-            st.error("🚨 FLAGGED AS POSSIBLE FRAUD: send for review.")
+    with right:
+        ss = st.session_state
+        if go:
+            row = pd.DataFrame([{
+                "Transaction_Amount": ss.amount, "Transaction_Type": ss.ttype, "Account_Balance": ss.balance,
+                "Device_Type": ss.device, "Location": ss.location, "Merchant_Category": ss.merchant,
+                "IP_Address_Flag": int(bool(ss.ip)), "Previous_Fraudulent_Activity": int(bool(ss.prev)),
+                "Daily_Transaction_Count": ss.daily, "Avg_Transaction_Amount_7d": ss.avg7,
+                "Failed_Transaction_Count_7d": ss.failed, "Card_Type": ss.card, "Card_Age": ss.card_age,
+                "Transaction_Distance": ss.dist, "Authentication_Method": ss.auth,
+                "Is_Weekend": int(ss.d.weekday() >= 5), "Hour": ss.t.hour, "Day": ss.d.day}])
+            p = float(predict(row)[0])
+            if p >= THRESH:
+                color, verdict = "#c62828", "🚨 FLAGGED: send for review"
+            elif p >= THRESH * 0.5:
+                color, verdict = "#ef8f00", "⚠️ Borderline: monitor"
+            else:
+                color, verdict = "#2e7d32", "✅ Looks legitimate"
+            st.markdown(f"""<div class="card" style="background:{color}">
+              <div class="lbl">Fraud probability</div><div class="big">{p:.2%}</div>
+              <div class="verdict">{verdict}</div>
+              <div class="bar"><div style="width:{min(p,1)*100:.1f}%"></div>
+              <span class="tick" style="left:{THRESH*100:.0f}%"></span></div>
+              <div style="font-size:.75rem;margin-top:.4rem;opacity:.9">Black tick = decision threshold ({THRESH:.0%})</div>
+            </div>""", unsafe_allow_html=True)
+            st.markdown("&nbsp;")
+            st.markdown("**What moved this score** (percentage points vs. a typical value for each input)")
+            inf = (influence(row) * 100).round(2)
+            inf = inf.reindex(inf.abs().sort_values(ascending=False).index).head(8)
+            st.bar_chart(inf[::-1], horizontal=True)
+            st.caption("Computed from the trained model by swapping one input at a time. Small bars mean the model barely uses that input.")
         else:
-            st.success("✅ Looks legitimate.")
+            st.info("Fill in the transaction on the left, or pick a quick example from the sidebar, then press **Analyze transaction**.")
 
-# ---------------------------------------------------------------- batch
+# ------------------------------------------------------------------ tab 2
 with tab2:
-    st.write("Upload a CSV with the same columns as the training dataset "
-             "(Transaction_ID, User_ID and Risk_Score are ignored if present).")
+    st.write("Upload a CSV with the dataset's columns. Transaction_ID, User_ID, Risk_Score and Fraud_Label are ignored if present.")
     up = st.file_uploader("CSV file", type="csv")
     if up:
         raw = pd.read_csv(up)
-        try:
-            if "Timestamp" in raw.columns:
-                X = prepare(raw).drop(columns=["Fraud_Label"], errors="ignore")
-            else:
-                X = raw.drop(columns=["Transaction_ID", "User_ID", "Risk_Score", "Fraud_Label"], errors="ignore")
-            probs = model.predict_proba(X[FEATURES])[:, 1]
-        except KeyError as e:
-            st.error(f"Missing column: {e}")
-            st.stop()
-        out = raw.copy()
-        out["Fraud_Probability"] = probs.round(4)
-        out["Flagged"] = (probs >= THRESH).astype(int)
-        a, b, c = st.columns(3)
-        a.metric("Transactions", f"{len(out):,}")
-        b.metric("Flagged as fraud", f"{int(out['Flagged'].sum()):,}")
-        c.metric("Flag rate", f"{out['Flagged'].mean():.1%}")
-        st.dataframe(out.sort_values("Fraud_Probability", ascending=False), use_container_width=True)
-        st.download_button("Download results", out.to_csv(index=False).encode(),
-                           "fraud_predictions.csv", "text/csv")
+        X = raw.drop(columns=["Transaction_ID", "User_ID", "Risk_Score", "Fraud_Label"], errors="ignore")
+        if "Timestamp" in X.columns:
+            ts = pd.to_datetime(X["Timestamp"])
+            X = X.drop(columns=["Timestamp"]).assign(Hour=ts.dt.hour, Day=ts.dt.day)
+        missing = [c for c in FEATURES if c not in X.columns]
+        if missing:
+            st.error(f"Missing columns: {missing}")
+        else:
+            probs = predict(X)
+            out = raw.copy()
+            out["Fraud_Probability"] = probs.round(4)
+            out["Flagged"] = (probs >= THRESH).astype(int)
+            a, b, c = st.columns(3)
+            a.metric("Transactions", f"{len(out):,}")
+            b.metric("Flagged", f"{int(out['Flagged'].sum()):,}")
+            c.metric("Flag rate", f"{out['Flagged'].mean():.1%}")
+            st.markdown("**Distribution of fraud probabilities**")
+            hist = pd.cut(out["Fraud_Probability"], bins=[i / 10 for i in range(11)], include_lowest=True).value_counts().sort_index()
+            st.bar_chart(pd.Series(hist.values, index=[f"{iv.left:.1f}-{iv.right:.1f}" for iv in hist.index]))
+            st.dataframe(out.sort_values("Fraud_Probability", ascending=False), width="stretch", hide_index=True,
+                         column_config={"Fraud_Probability": st.column_config.ProgressColumn(
+                             "Fraud_Probability", min_value=0.0, max_value=1.0, format="%.2f")})
+            st.download_button("⬇️ Download results", out.to_csv(index=False).encode(), "fraud_predictions.csv", "text/csv")
 
-# ---------------------------------------------------------------- info
+# ------------------------------------------------------------------ tab 3
 with tab3:
     if metrics:
         st.subheader(f"Test-set performance (threshold {metrics['threshold']:.2f}, n = {metrics['n_test']:,})")
@@ -113,14 +199,33 @@ with tab3:
         b.metric("Precision", f"{metrics['precision']:.4f}")
         c.metric("Recall", f"{metrics['recall']:.4f}")
         d.metric("F1-score", f"{metrics['f1']:.4f}")
-        st.write("Confusion matrix")
-        st.table(pd.DataFrame([[metrics["tn"], metrics["fp"]], [metrics["fn"], metrics["tp"]]],
-                              index=["Actual legitimate", "Actual fraud"],
-                              columns=["Predicted legitimate", "Predicted fraud"]))
+        cfg = metrics.get("config", {})
+        if cfg:
+            st.caption("Selected configuration: " + ", ".join(f"{k}={v}" for k, v in cfg.items()))
+        x, y = st.columns([1, 1.4], gap="large")
+        with x:
+            st.markdown("**Confusion matrix**")
+            cm = pd.DataFrame([[metrics["tn"], metrics["fp"]], [metrics["fn"], metrics["tp"]]],
+                              index=["Actual legit", "Actual fraud"], columns=["Pred. legit", "Pred. fraud"])
+            st.dataframe(cm.style.background_gradient(cmap="Reds"), width="stretch")
+        with y:
+            st.markdown("**Top 10 feature importances**")
+            names = bundle["model"].named_steps["prep"].get_feature_names_out()
+            imp = pd.Series(bundle["model"].named_steps["clf"].feature_importances_, index=names)
+            imp.index = [n.split("__", 1)[-1] for n in imp.index]
+            st.bar_chart(imp.sort_values(ascending=False).head(10)[::-1], horizontal=True)
+    else:
+        st.info("Train the model to see its metrics and feature importances here.")
+    if metrics and metrics.get("sensitivity_by_feature"):
+        st.markdown("**How much each non-key input moves the score** (average change in fraud probability, percentage points)")
+        sens = pd.Series(metrics["sensitivity_by_feature"]) * 100
+        st.bar_chart(sens.sort_values()[::-1].head(12)[::-1], horizontal=True)
+        st.caption("These effects are small and are learned noise: statistical tests found no real signal in these inputs. "
+                   "Failed_Transaction_Count_7d is the only input that drives the decision.")
     st.markdown("""
-**How it works:** one-hot encoding and scaling, SMOTE on the training data only, then an XGBoost
-classifier. A transaction is flagged when its fraud probability is at least the threshold.
+**How it works:** one-hot encoding and scaling, SMOTE on the training data only, then XGBoost.
+A transaction is flagged when its fraud probability reaches the threshold.
 
-**Limitations:** the dataset is synthetic with rule-based labels, `Risk_Score` was removed because it
-leaks the target, and the threshold was tuned on the test set, so the metrics are optimistic.
+**Limitations:** the dataset is synthetic with rule-based labels, `Risk_Score` was removed because it leaks the
+target, and the threshold was chosen on a validation split. Inputs other than failed attempts have only a small effect on the score, and that effect is learned noise, not real fraud signal.
 """)
